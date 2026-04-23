@@ -23,14 +23,19 @@ import (
 )
 
 type options struct {
-	allNamespaces       bool
-	namespace           string
-	kubeconfig          string
-	threshold           float64
-	cpuLimitThreshold   float64
-	memLimitThreshold   float64
-	cpuRequestThreshold float64
-	memRequestThreshold float64
+	allNamespaces          bool
+	namespace              string
+	kubeconfig             string
+	threshold              float64
+	lowThreshold           float64
+	cpuLimitThreshold      float64
+	memLimitThreshold      float64
+	cpuRequestThreshold    float64
+	memRequestThreshold    float64
+	cpuLimitLowThreshold   float64
+	memLimitLowThreshold   float64
+	cpuRequestLowThreshold float64
+	memRequestLowThreshold float64
 }
 
 type containerKey struct {
@@ -77,6 +82,7 @@ type viewConfig struct {
 	title      string
 	threshold  float64
 	operator   string
+	sortAsc    bool
 	value      func(reportRow) float64
 	headers    []string
 	buildRow   func(reportRow) []string
@@ -92,12 +98,17 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	opts := options{
-		threshold:           -1,
-		cpuLimitThreshold:   80,
-		memLimitThreshold:   80,
-		cpuRequestThreshold: 100,
-		memRequestThreshold: 100,
-		kubeconfig:          defaultKubeconfig(),
+		threshold:              -1,
+		lowThreshold:           -1,
+		cpuLimitThreshold:      80,
+		memLimitThreshold:      80,
+		cpuRequestThreshold:    100,
+		memRequestThreshold:    100,
+		cpuLimitLowThreshold:   10,
+		memLimitLowThreshold:   10,
+		cpuRequestLowThreshold: 10,
+		memRequestLowThreshold: 10,
+		kubeconfig:             defaultKubeconfig(),
 	}
 
 	cmd := &cobra.Command{
@@ -109,6 +120,7 @@ func newRootCmd() *cobra.Command {
 			"  pod-near-limit-report",
 			"  pod-near-limit-report -n kube-system",
 			"  pod-near-limit-report --threshold 90",
+			"  pod-near-limit-report --low-threshold 15",
 			"  pod-near-limit-report --mem-limit-threshold 75",
 		}, "\n"),
 		PreRun: func(cmd *cobra.Command, _ []string) {
@@ -124,31 +136,53 @@ func newRootCmd() *cobra.Command {
 	flags.StringVarP(&opts.namespace, "namespace", "n", "", "Query one namespace")
 	flags.StringVarP(&opts.kubeconfig, "kubeconfig", "k", opts.kubeconfig, "Use a specific kubeconfig")
 	flags.Float64Var(&opts.threshold, "threshold", -1, "Set all four thresholds to the same percent")
+	flags.Float64Var(&opts.lowThreshold, "low-threshold", -1, "Set all four low-usage thresholds to the same percent")
 	flags.Float64Var(&opts.cpuLimitThreshold, "cpu-limit-threshold", 80, "CPU limit threshold percent")
 	flags.Float64Var(&opts.memLimitThreshold, "mem-limit-threshold", 80, "Memory limit threshold percent")
 	flags.Float64Var(&opts.cpuRequestThreshold, "cpu-request-threshold", 100, "CPU request threshold percent")
 	flags.Float64Var(&opts.memRequestThreshold, "mem-request-threshold", 100, "Memory request threshold percent")
+	flags.Float64Var(&opts.cpuLimitLowThreshold, "cpu-limit-low-threshold", 10, "CPU limit low-usage threshold percent")
+	flags.Float64Var(&opts.memLimitLowThreshold, "mem-limit-low-threshold", 10, "Memory limit low-usage threshold percent")
+	flags.Float64Var(&opts.cpuRequestLowThreshold, "cpu-request-low-threshold", 10, "CPU request low-usage threshold percent")
+	flags.Float64Var(&opts.memRequestLowThreshold, "mem-request-low-threshold", 10, "Memory request low-usage threshold percent")
 
 	return cmd
 }
 
 func applyThresholdOverrides(cmd *cobra.Command, opts *options) {
 	if opts.threshold < 0 {
-		return
+	} else {
+		flags := cmd.Flags()
+		if !flags.Changed("cpu-limit-threshold") {
+			opts.cpuLimitThreshold = opts.threshold
+		}
+		if !flags.Changed("mem-limit-threshold") {
+			opts.memLimitThreshold = opts.threshold
+		}
+		if !flags.Changed("cpu-request-threshold") {
+			opts.cpuRequestThreshold = opts.threshold
+		}
+		if !flags.Changed("mem-request-threshold") {
+			opts.memRequestThreshold = opts.threshold
+		}
 	}
 
 	flags := cmd.Flags()
-	if !flags.Changed("cpu-limit-threshold") {
-		opts.cpuLimitThreshold = opts.threshold
+	if opts.lowThreshold < 0 {
+		return
 	}
-	if !flags.Changed("mem-limit-threshold") {
-		opts.memLimitThreshold = opts.threshold
+
+	if !flags.Changed("cpu-limit-low-threshold") {
+		opts.cpuLimitLowThreshold = opts.lowThreshold
 	}
-	if !flags.Changed("cpu-request-threshold") {
-		opts.cpuRequestThreshold = opts.threshold
+	if !flags.Changed("mem-limit-low-threshold") {
+		opts.memLimitLowThreshold = opts.lowThreshold
 	}
-	if !flags.Changed("mem-request-threshold") {
-		opts.memRequestThreshold = opts.threshold
+	if !flags.Changed("cpu-request-low-threshold") {
+		opts.cpuRequestLowThreshold = opts.lowThreshold
+	}
+	if !flags.Changed("mem-request-low-threshold") {
+		opts.memRequestLowThreshold = opts.lowThreshold
 	}
 }
 
@@ -191,10 +225,14 @@ func run(ctx context.Context, opts options) error {
 
 func validateThresholds(opts options) error {
 	values := map[string]float64{
-		"--cpu-limit-threshold":   opts.cpuLimitThreshold,
-		"--mem-limit-threshold":   opts.memLimitThreshold,
-		"--cpu-request-threshold": opts.cpuRequestThreshold,
-		"--mem-request-threshold": opts.memRequestThreshold,
+		"--cpu-limit-threshold":       opts.cpuLimitThreshold,
+		"--mem-limit-threshold":       opts.memLimitThreshold,
+		"--cpu-request-threshold":     opts.cpuRequestThreshold,
+		"--mem-request-threshold":     opts.memRequestThreshold,
+		"--cpu-limit-low-threshold":   opts.cpuLimitLowThreshold,
+		"--mem-limit-low-threshold":   opts.memLimitLowThreshold,
+		"--cpu-request-low-threshold": opts.cpuRequestLowThreshold,
+		"--mem-request-low-threshold": opts.memRequestLowThreshold,
 	}
 
 	for name, value := range values {
@@ -316,6 +354,7 @@ func renderViews(out io.Writer, rows []reportRow, opts options) {
 			title:     "reaching cpu-limit",
 			threshold: opts.cpuLimitThreshold,
 			operator:  ">=",
+			sortAsc:   false,
 			value: func(row reportRow) float64 {
 				return row.cpuLimPct
 			},
@@ -329,6 +368,7 @@ func renderViews(out io.Writer, rows []reportRow, opts options) {
 			title:     "reaching mem-limit",
 			threshold: opts.memLimitThreshold,
 			operator:  ">=",
+			sortAsc:   false,
 			value: func(row reportRow) float64 {
 				return row.memLimPct
 			},
@@ -342,6 +382,7 @@ func renderViews(out io.Writer, rows []reportRow, opts options) {
 			title:     "above cpu-request",
 			threshold: opts.cpuRequestThreshold,
 			operator:  ">",
+			sortAsc:   false,
 			value: func(row reportRow) float64 {
 				return row.cpuReqPct
 			},
@@ -355,6 +396,7 @@ func renderViews(out io.Writer, rows []reportRow, opts options) {
 			title:     "above mem-request",
 			threshold: opts.memRequestThreshold,
 			operator:  ">",
+			sortAsc:   false,
 			value: func(row reportRow) float64 {
 				return row.memReqPct
 			},
@@ -369,6 +411,49 @@ func renderViews(out io.Writer, rows []reportRow, opts options) {
 	for _, view := range views {
 		renderView(out, rows, view)
 	}
+
+	renderLowUsageView(out, rows,
+		"well below cpu request/limit",
+		opts.cpuRequestLowThreshold,
+		opts.cpuLimitLowThreshold,
+		func(row reportRow) float64 { return row.cpuReqPct },
+		func(row reportRow) float64 { return row.cpuLimPct },
+		[]string{"namespace", "pod", "container", "cpu_use", "cpu_request", "cpu_req_pct", "cpu_limit", "cpu_lim_pct"},
+		func(row reportRow) []string {
+			return []string{
+				row.namespace,
+				row.pod,
+				row.container,
+				row.cpuUse,
+				row.cpuRequest,
+				percentText(row.cpuReqPct),
+				row.cpuLimit,
+				percentText(row.cpuLimPct),
+			}
+		},
+		map[int]bool{3: true, 4: true, 5: true, 6: true, 7: true},
+	)
+	renderLowUsageView(out, rows,
+		"well below mem request/limit",
+		opts.memRequestLowThreshold,
+		opts.memLimitLowThreshold,
+		func(row reportRow) float64 { return row.memReqPct },
+		func(row reportRow) float64 { return row.memLimPct },
+		[]string{"namespace", "pod", "container", "mem_use", "mem_request", "mem_req_pct", "mem_limit", "mem_lim_pct"},
+		func(row reportRow) []string {
+			return []string{
+				row.namespace,
+				row.pod,
+				row.container,
+				row.memUse,
+				row.memRequest,
+				percentText(row.memReqPct),
+				row.memLimit,
+				percentText(row.memLimPct),
+			}
+		},
+		map[int]bool{3: true, 4: true, 5: true, 6: true, 7: true},
+	)
 }
 
 func defaultKubeconfig() string {
@@ -506,6 +591,9 @@ func renderView(out io.Writer, rows []reportRow, view viewConfig) {
 		if view.operator == ">=" && value < view.threshold {
 			continue
 		}
+		if view.operator == "<=" && value > view.threshold {
+			continue
+		}
 		filtered = append(filtered, row)
 	}
 
@@ -519,6 +607,9 @@ func renderView(out io.Writer, rows []reportRow, view viewConfig) {
 		left := view.value(filtered[i])
 		right := view.value(filtered[j])
 		if left != right {
+			if view.sortAsc {
+				return left < right
+			}
 			return left > right
 		}
 		if filtered[i].namespace != filtered[j].namespace {
@@ -538,6 +629,82 @@ func renderView(out io.Writer, rows []reportRow, view viewConfig) {
 
 	writeMarkdownTable(out, tableRows, view.rightAlign)
 	fmt.Fprintln(out)
+}
+
+func renderLowUsageView(
+	out io.Writer,
+	rows []reportRow,
+	title string,
+	requestThreshold float64,
+	limitThreshold float64,
+	requestValue func(reportRow) float64,
+	limitValue func(reportRow) float64,
+	headers []string,
+	buildRow func(reportRow) []string,
+	rightAlign map[int]bool,
+) {
+	fmt.Fprintf(out, "## %s\n\n", title)
+	fmt.Fprintf(
+		out,
+		"Threshold: `request <= %s%% or limit <= %s%%`\n\n",
+		formatThreshold(requestThreshold),
+		formatThreshold(limitThreshold),
+	)
+
+	filtered := make([]reportRow, 0)
+	for _, row := range rows {
+		requestPct := requestValue(row)
+		limitPct := limitValue(row)
+		if !matchesLowThreshold(requestPct, requestThreshold) && !matchesLowThreshold(limitPct, limitThreshold) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+
+	if len(filtered) == 0 {
+		fmt.Fprintln(out, "(none)")
+		fmt.Fprintln(out)
+		return
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		left := lowSortValue(requestValue(filtered[i]), requestThreshold, limitValue(filtered[i]), limitThreshold)
+		right := lowSortValue(requestValue(filtered[j]), requestThreshold, limitValue(filtered[j]), limitThreshold)
+		if left != right {
+			return left < right
+		}
+		if filtered[i].namespace != filtered[j].namespace {
+			return filtered[i].namespace < filtered[j].namespace
+		}
+		if filtered[i].pod != filtered[j].pod {
+			return filtered[i].pod < filtered[j].pod
+		}
+		return filtered[i].container < filtered[j].container
+	})
+
+	tableRows := make([][]string, 0, len(filtered)+1)
+	tableRows = append(tableRows, headers)
+	for _, row := range filtered {
+		tableRows = append(tableRows, buildRow(row))
+	}
+
+	writeMarkdownTable(out, tableRows, rightAlign)
+	fmt.Fprintln(out)
+}
+
+func matchesLowThreshold(value, threshold float64) bool {
+	return value >= 0 && value <= threshold
+}
+
+func lowSortValue(requestValue, requestThreshold, limitValue, limitThreshold float64) float64 {
+	best := math.MaxFloat64
+	if matchesLowThreshold(requestValue, requestThreshold) {
+		best = requestValue
+	}
+	if matchesLowThreshold(limitValue, limitThreshold) && limitValue < best {
+		best = limitValue
+	}
+	return best
 }
 
 func writeMarkdownTable(out io.Writer, rows [][]string, rightAlign map[int]bool) {

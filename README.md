@@ -8,6 +8,8 @@ Install Go.
 go run github.com/syself/kube-resources-md-table@latest
 ```
 
+The report includes both pods nearing their requests or limits and two low-usage summaries for CPU and memory. Use `--low-threshold` to adjust the default low-usage cutoff of `10%`.
+
 ## Start Example output
 
 ## reaching cpu-limit
@@ -61,6 +63,5 @@ Threshold: `> 100%`
 | kube-system | coredns-proportional-autoscaler-75d4c749fd-64cw5           | coredns-autoscaler |   9.6Mi |         10M |      101.0% |
 | kube-system | cilium-hxsrn                                               | cilium-agent       |   252Mi |       250Mi |      101.0% |
 | kube-system | cilium-operator-55c45d4cb8-6dsld                           | cilium-operator    |    25Mi |        25Mi |      100.4% |
-
 
 ## End Example output
