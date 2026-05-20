@@ -206,6 +206,13 @@ func run(ctx context.Context, opts options) error {
 		return fmt.Errorf("create metrics client: %w", err)
 	}
 
+	clusterName, clusterUser, apiServer, err := clusterInfo(opts.kubeconfig)
+	if err != nil {
+		return fmt.Errorf("determine cluster metadata: %w", err)
+	}
+
+	fmt.Fprintf(os.Stdout, "connected cluster: %s\ncluster user: %s\napi-server: %s\n\n", clusterName, clusterUser, apiServer)
+
 	namespace := effectiveNamespace(opts)
 
 	pods, err := coreClient.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
@@ -262,6 +269,39 @@ func buildConfig(kubeconfig string) (*rest.Config, error) {
 	cfg.Burst = -1
 	cfg.RateLimiter = nil
 	return cfg, nil
+}
+
+func clusterInfo(kubeconfig string) (string, string, string, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfig != "" {
+		rules.ExplicitPath = kubeconfig
+	}
+
+	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
+	rawConfig, err := loader.RawConfig()
+	if err != nil {
+		return "", "", "", fmt.Errorf("load raw kubeconfig: %w", err)
+	}
+
+	clusterName := rawConfig.CurrentContext
+	clusterUser := "<unknown>"
+	if currentContext, ok := rawConfig.Contexts[rawConfig.CurrentContext]; ok {
+		if currentContext.Cluster != "" {
+			clusterName = currentContext.Cluster
+		}
+		if currentContext.AuthInfo != "" {
+			clusterUser = currentContext.AuthInfo
+		}
+	}
+	if clusterName == "" {
+		clusterName = "<unknown>"
+	}
+
+	cfg, err := loader.ClientConfig()
+	if err != nil {
+		return clusterName, clusterUser, "", fmt.Errorf("load kubeconfig client config: %w", err)
+	}
+	return clusterName, clusterUser, cfg.Host, nil
 }
 
 func effectiveNamespace(opts options) string {
